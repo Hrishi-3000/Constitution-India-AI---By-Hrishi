@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { AnalysisResult } from '../types';
+import { generateSpeech } from '../services/geminiService';
 
 interface AnalysisCardProps {
   result: AnalysisResult;
@@ -10,6 +11,42 @@ interface AnalysisCardProps {
 
 const AnalysisCard: React.FC<AnalysisCardProps> = ({ result, query, isLoading }) => {
   const [showCitations, setShowCitations] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const handlePlayAudio = async () => {
+    if (isPlaying) return;
+    setIsPlaying(true);
+    try {
+      const base64 = await generateSpeech(result.explanation);
+      const audioBlob = await fetch(`data:audio/pcm;base64,${base64}`).then(res => res.blob());
+      
+      // Decoding raw PCM manually as per guidelines
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const dataInt16 = new Int16Array(arrayBuffer);
+      const buffer = audioCtx.createBuffer(1, dataInt16.length, 24000);
+      const channelData = buffer.getChannelData(0);
+      for (let i = 0; i < dataInt16.length; i++) {
+        channelData[i] = dataInt16[i] / 32768.0;
+      }
+      
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      source.onended = () => setIsPlaying(false);
+      source.start();
+    } catch (err) {
+      console.error("Audio playback failed", err);
+      setIsPlaying(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, index: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
 
   if (isLoading) {
     return (
@@ -35,15 +72,33 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ result, query, isLoading })
   };
 
   return (
-    <div className="w-full bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden transition-all duration-300 transform">
+    <div className="w-full bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden transition-all duration-300">
       <div className={`px-6 py-4 border-b ${getStatusColor(result.status)} flex items-center justify-between`}>
         <div className="flex items-center">
           <span className="text-2xl mr-3">{result.status}</span>
           <span className="font-semibold text-lg tracking-tight uppercase">{getStatusLabel(result.status)}</span>
         </div>
-        <div className="hidden sm:block">
-            <span className="text-xs opacity-70 uppercase font-bold tracking-widest">Legal Status</span>
-        </div>
+        <button 
+          onClick={handlePlayAudio}
+          disabled={isPlaying}
+          className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase transition-all ${isPlaying ? 'bg-indigo-100 text-indigo-400' : 'bg-white/50 hover:bg-white text-indigo-700 shadow-sm'}`}
+        >
+          {isPlaying ? (
+            <span className="flex items-center gap-1">
+              <span className="animate-bounce inline-block w-1 h-3 bg-indigo-400 rounded-full"></span>
+              <span className="animate-bounce delay-75 inline-block w-1 h-3 bg-indigo-400 rounded-full"></span>
+              <span className="animate-bounce delay-150 inline-block w-1 h-3 bg-indigo-400 rounded-full"></span>
+              Speaking...
+            </span>
+          ) : (
+            <>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+              </svg>
+              Listen
+            </>
+          )}
+        </button>
       </div>
       
       <div className="p-8">
@@ -96,10 +151,25 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ result, query, isLoading })
             </button>
             
             {showCitations && (
-              <div className="mt-4 space-y-4 animate-fadeIn">
+              <div className="mt-4 space-y-4">
                 {result.citations.map((citation, idx) => (
-                  <div key={idx} className="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                    <h4 className="text-indigo-700 font-bold text-sm mb-2 uppercase tracking-wide">{citation.article}</h4>
+                  <div key={idx} className="bg-slate-50 rounded-lg p-4 border border-slate-100 relative group/citation">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="text-indigo-700 font-bold text-sm uppercase tracking-wide">{citation.article}</h4>
+                      <button 
+                        onClick={() => copyToClipboard(citation.text, idx)}
+                        className="text-slate-400 hover:text-indigo-600 transition-colors"
+                        title="Copy text"
+                      >
+                        {copiedIndex === idx ? (
+                          <span className="text-[10px] font-bold text-emerald-500">COPIED!</span>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                     <p className="text-slate-600 text-sm leading-relaxed font-serif italic">
                       "{citation.text}"
                     </p>
@@ -109,19 +179,6 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ result, query, isLoading })
             )}
           </div>
         )}
-      </div>
-      
-      <div className="px-8 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-         <span className="text-slate-400 text-xs italic">Data generated by AI expert trained on Indian Constitution</span>
-         <button 
-           onClick={() => window.print()} 
-           className="text-slate-500 hover:text-indigo-600 transition-colors"
-           title="Print analysis"
-         >
-           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-             <path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a2 2 0 002 2h6a2 2 0 002-2v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" />
-           </svg>
-         </button>
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { AnalysisResult } from "../types";
 
 export const analyzeQuery = async (query: string): Promise<AnalysisResult> => {
@@ -19,7 +19,7 @@ export const analyzeQuery = async (query: string): Promise<AnalysisResult> => {
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-pro-preview',
       contents: query,
       config: {
         systemInstruction,
@@ -69,5 +69,30 @@ export const analyzeQuery = async (query: string): Promise<AnalysisResult> => {
   } catch (error) {
     console.error("Gemini API Error:", error);
     throw new Error("Failed to consult the Constitution expert. Please check your connection and try again.");
+  }
+};
+
+export const generateSpeech = async (text: string): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: `Read this constitutional explanation clearly: ${text}` }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+      },
+    });
+    
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) throw new Error("No audio data received");
+    return base64Audio;
+  } catch (error) {
+    console.error("TTS Error:", error);
+    throw error;
   }
 };
